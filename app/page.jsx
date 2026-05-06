@@ -139,6 +139,7 @@ export default function ConnectedFinancialAdvisor() {
   const [activeTab, setActiveTab] = useState("advisor");
   const [user, setUser] = useState(null);
   const [household, setHousehold] = useState(null);
+  const [enrollments, setEnrollments] = useState([]);
   const [accounts, setAccounts] = useState([]);
   const [transactions, setTransactions] = useState([]);
   const [rules, setRules] = useState([]);
@@ -191,17 +192,19 @@ export default function ConnectedFinancialAdvisor() {
   const loadData = useCallback(async (currentHousehold) => {
     if (!currentHousehold) return;
 
-    const [{ data: accountRows }, { data: transactionRows }, { data: ruleRows }, { data: goalRows }] = await Promise.all([
+    const [{ data: accountRows }, { data: transactionRows }, { data: ruleRows }, { data: goalRows }, { data: enrollmentRows }] = await Promise.all([
       supabase.from("accounts").select("*").eq("household_id", currentHousehold.id).order("name"),
       supabase.from("transactions").select("*").eq("household_id", currentHousehold.id).order("date", { ascending: false }).limit(500),
       supabase.from("category_rules").select("*").eq("household_id", currentHousehold.id).order("created_at", { ascending: false }),
       supabase.from("savings_goals").select("*").eq("household_id", currentHousehold.id).order("created_at", { ascending: true }),
+      supabase.from("teller_enrollments").select("*").eq("household_id", currentHousehold.id).order("created_at", { ascending: true }),
     ]);
 
     setAccounts(accountRows || []);
     setTransactions(transactionRows || []);
     setRules(ruleRows || []);
     setSavingsGoals(goalRows || []);
+    setEnrollments(enrollmentRows || []);
 
     let { data: month } = await supabase
       .from("budget_months")
@@ -275,6 +278,29 @@ export default function ConnectedFinancialAdvisor() {
     }
 
     setMessage("Transactions synced.");
+    await loadData(household);
+    setIsBusy(false);
+  }
+
+  async function disconnectBank(enrollmentId, institutionName) {
+    if (!confirm(`Disconnect ${institutionName}? This will remove all its accounts and transactions from your dashboard.`)) return;
+    setIsBusy(true);
+    setMessage(`Disconnecting ${institutionName}...`);
+
+    const response = await fetch("/api/teller/disconnect", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ enrollmentId, userId: user.id, householdId: household.id }),
+    });
+
+    const data = await response.json();
+    if (!response.ok) {
+      setMessage(data.error || "Could not disconnect bank.");
+      setIsBusy(false);
+      return;
+    }
+
+    setMessage(`${institutionName} disconnected.`);
     await loadData(household);
     setIsBusy(false);
   }
@@ -534,6 +560,36 @@ export default function ConnectedFinancialAdvisor() {
 
         {activeTab === "transactions" && (
           <section className="space-y-4">
+            <Card className="p-5">
+              <h2 className="text-2xl font-black tracking-tight">Connected banks</h2>
+              <p className="mt-1 text-sm text-slate-500">Manage your Teller connections. Disconnecting removes all accounts and transactions for that institution.</p>
+              <div className="mt-4 space-y-3">
+                {enrollments.map((enrollment) => {
+                  const enrollmentAccounts = accounts.filter((a) => a.enrollment_id === enrollment.enrollment_id);
+                  return (
+                    <div key={enrollment.id} className="flex items-center justify-between rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                      <div>
+                        <p className="font-black">{enrollment.institution_name}</p>
+                        <p className="text-sm text-slate-500">{enrollmentAccounts.length} account{enrollmentAccounts.length !== 1 ? "s" : ""} • Connected {new Date(enrollment.created_at).toLocaleDateString()}</p>
+                      </div>
+                      <Button
+                        variant="ghost"
+                        onClick={() => disconnectBank(enrollment.enrollment_id, enrollment.institution_name)}
+                        disabled={isBusy}
+                        className="text-red-500 hover:bg-red-50 hover:text-red-700"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                        Disconnect
+                      </Button>
+                    </div>
+                  );
+                })}
+                {!enrollments.length && (
+                  <p className="text-sm text-slate-500">No banks connected yet. Use the Connect bank button above.</p>
+                )}
+              </div>
+            </Card>
+
             <Card className="p-5">
               <h2 className="text-2xl font-black tracking-tight">Connected accounts</h2>
               <div className="mt-4 grid gap-3 md:grid-cols-3">
