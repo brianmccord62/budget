@@ -1,7 +1,6 @@
 "use client";
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { usePlaidLink } from "react-plaid-link";
 import { motion } from "framer-motion";
 import {
   AlertTriangle,
@@ -34,6 +33,7 @@ import {
 } from "recharts";
 import { getBrowserSupabase } from "@/lib/supabaseClient";
 import { buildAdvisorNotes } from "@/lib/financeRules";
+import TellerConnect from "@/components/TellerConnect";
 
 const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
 
@@ -139,7 +139,6 @@ export default function ConnectedFinancialAdvisor() {
   const [activeTab, setActiveTab] = useState("advisor");
   const [user, setUser] = useState(null);
   const [household, setHousehold] = useState(null);
-  const [linkToken, setLinkToken] = useState(null);
   const [accounts, setAccounts] = useState([]);
   const [transactions, setTransactions] = useState([]);
   const [rules, setRules] = useState([]);
@@ -250,68 +249,18 @@ export default function ConnectedFinancialAdvisor() {
     boot();
   }, [supabase, loadData]);
 
-  async function createLinkToken() {
-    if (!user) return;
-    setIsBusy(true);
-    setMessage("");
-
-    const response = await fetch("/api/plaid/create-link-token", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ userId: user.id }),
-    });
-
-    const data = await response.json();
-    setIsBusy(false);
-
-    if (!response.ok) {
-      setMessage(data.error || "Could not start Plaid.");
-      return;
-    }
-
-    setLinkToken(data.link_token);
-  }
-
-  const onSuccess = useCallback(async (public_token) => {
-    if (!user || !household) return;
-    setIsBusy(true);
-    setMessage("Connecting bank...");
-
-    const response = await fetch("/api/plaid/exchange-public-token", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ publicToken: public_token, userId: user.id, householdId: household.id }),
-    });
-
-    const data = await response.json();
-    if (!response.ok) {
-      setMessage(data.error || "Bank connection failed.");
-      setIsBusy(false);
-      return;
-    }
-
-    setMessage(`Connected ${data.institution_name}. Now syncing transactions...`);
+  // Called by TellerConnect after a bank is successfully linked
+  const handleTellerSuccess = useCallback(async (data) => {
+    setMessage(`Connected ${data.institution_name}. Syncing transactions...`);
     await syncTransactions();
-    setIsBusy(false);
-  }, [user, household]);
-
-  const plaid = usePlaidLink({
-    token: linkToken,
-    onSuccess,
-  });
-
-  useEffect(() => {
-    if (linkToken && plaid.ready) {
-      plaid.open();
-    }
-  }, [linkToken, plaid.ready]);
+  }, []);
 
   async function syncTransactions() {
     if (!user || !household) return;
     setIsBusy(true);
     setMessage("Syncing transactions...");
 
-    const response = await fetch("/api/plaid/sync-transactions", {
+    const response = await fetch("/api/teller/sync-transactions", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ userId: user.id, householdId: household.id }),
@@ -486,15 +435,22 @@ export default function ConnectedFinancialAdvisor() {
                 Your money, connected and categorized.
               </h1>
               <p className="mt-4 max-w-2xl text-sm leading-6 text-slate-300 md:text-base">
-                Connect banks with Plaid, sync transactions, customize categories, plan monthly budgets, share one household, and ask basic planning questions.
+                Connect banks with Teller, sync transactions, customize categories, plan monthly budgets, share one household, and ask basic planning questions.
               </p>
             </div>
 
             <div className="flex flex-wrap gap-2">
-              <Button onClick={createLinkToken} disabled={isBusy} className="bg-white text-slate-950 hover:bg-slate-100">
+              <TellerConnect
+                userId={user.id}
+                householdId={household.id}
+                onSuccess={handleTellerSuccess}
+                disabled={isBusy}
+                className="inline-flex items-center justify-center gap-2 rounded-2xl px-4 py-2.5 text-sm font-bold transition disabled:cursor-not-allowed disabled:opacity-50 bg-white text-slate-950 hover:bg-slate-100"
+              >
                 <LinkIcon className="h-4 w-4" />
                 Connect bank
-              </Button>
+              </TellerConnect>
+
               <Button onClick={syncTransactions} disabled={isBusy} className="bg-white/10 text-white hover:bg-white/20">
                 <RefreshCcw className="h-4 w-4" />
                 Sync
@@ -568,7 +524,7 @@ export default function ConnectedFinancialAdvisor() {
                   </ResponsiveContainer>
                 ) : (
                   <div className="flex h-full items-center justify-center rounded-3xl border border-dashed border-slate-300 p-6 text-center text-sm text-slate-500">
-                    Connect Plaid and sync transactions to see spending.
+                    Connect a bank and sync transactions to see spending.
                   </div>
                 )}
               </div>
@@ -584,7 +540,7 @@ export default function ConnectedFinancialAdvisor() {
                 {accounts.map((account) => (
                   <div key={account.id} className="rounded-3xl border border-slate-200 bg-slate-50 p-4">
                     <p className="font-black">{account.name}</p>
-                    <p className="text-sm text-slate-500">{account.subtype || account.type} • ****{account.mask}</p>
+                    <p className="text-sm text-slate-500">{account.subtype || account.type} • ****{account.last_four}</p>
                     <p className="mt-2 text-xl font-black">{money.format(account.current_balance || 0)}</p>
                   </div>
                 ))}
@@ -611,10 +567,10 @@ export default function ConnectedFinancialAdvisor() {
                     {transactions.slice(0, 100).map((tx) => (
                       <tr key={tx.id}>
                         <td className="px-4 py-3 text-slate-500">{tx.date}</td>
-                        <td className="px-4 py-3 font-semibold">{tx.merchant_name || tx.name}</td>
+                        <td className="px-4 py-3 font-semibold">{tx.merchant_name || tx.description}</td>
                         <td className="px-4 py-3">{tx.category}</td>
                         <td className="px-4 py-3 font-black">{money.format(tx.amount)}</td>
-                        <td className="px-4 py-3 text-slate-500">{tx.pending ? "Pending" : "Posted"}</td>
+                        <td className="px-4 py-3 text-slate-500">{tx.status === "pending" ? "Pending" : "Posted"}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -757,9 +713,9 @@ export default function ConnectedFinancialAdvisor() {
             <Card className="p-5">
               <h2 className="text-2xl font-black tracking-tight">Security notes</h2>
               <div className="mt-3 space-y-3 text-sm leading-6 text-slate-600">
-                <p>Plaid access tokens are only stored server-side in Supabase and are never sent to the browser.</p>
+                <p>Teller access tokens are only stored server-side in Supabase and are never sent to the browser.</p>
                 <p>Use Supabase RLS policies to limit household data to household members.</p>
-                <p>For production, move Plaid from sandbox to development or production and review Plaid’s compliance requirements.</p>
+                <p>For production, switch NEXT_PUBLIC_TELLER_ENV from sandbox to production in your Vercel environment variables.</p>
                 <p>This app provides educational financial guidance, not registered investment advice.</p>
               </div>
             </Card>
