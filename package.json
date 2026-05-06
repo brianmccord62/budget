@@ -1,5 +1,5 @@
 {
-  "name": "brian-financial-advisor-plaid",
+  "name": "brian-financial-advisor",
   "version": "2.0.0",
   "private": true,
   "scripts": {
@@ -9,16 +9,14 @@
     "lint": "next lint"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.39.0",
     "@supabase/supabase-js": "^2.49.4",
     "framer-motion": "^12.0.0",
     "lucide-react": "^0.468.0",
     "next": "^15.3.0",
-    "plaid": "^33.0.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
-    "react-plaid-link": "^4.1.0",
-    "recharts": "^2.15.0",
-    "@anthropic-ai/sdk": "^0.39.0"
+    "recharts": "^2.15.0"
   },
   "devDependencies": {
     "autoprefixer": "^10.4.20",
