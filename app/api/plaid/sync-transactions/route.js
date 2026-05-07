@@ -6,25 +6,17 @@ import { categorizeTransaction } from "@/lib/financeRules";
 export async function POST(request) {
   try {
     const { userId, householdId } = await request.json();
-
     if (!userId || !householdId) {
-      return NextResponse.json(
-        { error: "Missing userId or householdId." },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "Missing userId or householdId." }, { status: 400 });
     }
 
     const supabase = getSupabaseAdmin();
     const plaid = getPlaidClient();
 
-    const { data: items, error: itemsError } = await supabase
+    const { data: items } = await supabase
       .from("plaid_items")
       .select("*")
       .eq("household_id", householdId);
-
-    if (itemsError) {
-      return NextResponse.json({ error: "Could not load Plaid items." }, { status: 500 });
-    }
 
     const { data: customRules } = await supabase
       .from("category_rules")
@@ -35,10 +27,7 @@ export async function POST(request) {
 
     for (const item of items || []) {
       try {
-        // Sync accounts
-        const accountsResponse = await plaid.accountsGet({
-          access_token: item.access_token,
-        });
+        const accountsResponse = await plaid.accountsGet({ access_token: item.access_token });
 
         const accountRows = accountsResponse.data.accounts.map((acct) => ({
           plaid_account_id: acct.account_id,
@@ -46,7 +35,6 @@ export async function POST(request) {
           item_id: item.item_id,
           institution_name: item.institution_name,
           name: acct.name,
-          official_name: acct.official_name,
           type: acct.type,
           subtype: acct.subtype,
           mask: acct.mask,
@@ -55,12 +43,9 @@ export async function POST(request) {
         }));
 
         if (accountRows.length) {
-          await supabase
-            .from("accounts")
-            .upsert(accountRows, { onConflict: "plaid_account_id" });
+          await supabase.from("accounts").upsert(accountRows, { onConflict: "plaid_account_id" });
         }
 
-        // Sync transactions using /transactions/sync
         let cursor = item.transactions_cursor || null;
         let added = [];
         let hasMore = true;
@@ -70,7 +55,6 @@ export async function POST(request) {
             access_token: item.access_token,
             cursor: cursor || undefined,
           });
-
           added = added.concat(syncResponse.data.added);
           hasMore = syncResponse.data.has_more;
           cursor = syncResponse.data.next_cursor;
@@ -95,40 +79,24 @@ export async function POST(request) {
         }));
 
         if (txRows.length) {
-          await supabase
-            .from("transactions")
-            .upsert(txRows, { onConflict: "plaid_transaction_id" });
+          await supabase.from("transactions").upsert(txRows, { onConflict: "plaid_transaction_id" });
         }
 
-        // Save updated cursor
-        await supabase
-          .from("plaid_items")
-          .update({
-            transactions_cursor: cursor,
-            updated_at: new Date().toISOString(),
-          })
-          .eq("item_id", item.item_id);
+        await supabase.from("plaid_items").update({
+          transactions_cursor: cursor,
+          updated_at: new Date().toISOString(),
+        }).eq("item_id", item.item_id);
 
-        results.push({
-          institution_name: item.institution_name,
-          accounts: accountRows.length,
-          transactions_synced: txRows.length,
-        });
+        results.push({ institution_name: item.institution_name, accounts: accountRows.length, transactions_synced: txRows.length });
       } catch (err) {
-        console.error(`Sync failed for item ${item.item_id}:`, err?.response?.data || err);
-        results.push({
-          institution_name: item.institution_name,
-          error: err.message,
-        });
+        console.error(`Sync failed for ${item.item_id}:`, err?.response?.data || err);
+        results.push({ institution_name: item.institution_name, error: err.message });
       }
     }
 
     return NextResponse.json({ ok: true, results });
   } catch (error) {
     console.error("sync-transactions error", error);
-    return NextResponse.json(
-      { error: "Could not sync transactions." },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: "Could not sync transactions." }, { status: 500 });
   }
 }
